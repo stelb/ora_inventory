@@ -1,5 +1,6 @@
 from xml.dom import minidom
 import os
+import re
 
 import subprocess
 
@@ -19,6 +20,15 @@ class Inventory:
                 if key == "inventory_loc":
                     self.location = value.strip()
         print("inventory: %s\n" % self.location)
+
+    def get_info(self, user, command):
+        # execute command as given user and return array of output lines
+        print(command)
+        #del os.environ["LANG"]
+        proc = subprocess.Popen(['su', user, '-c',
+                                command],
+                                stdout=subprocess.PIPE)
+        return proc.stdout.read().splitlines()
 
     def validatehome(self, inv_loc, home):
         # does home exist?
@@ -60,11 +70,8 @@ class Inventory:
                 self.gi_home = loc
 
     def dbs(self):
-        proc = subprocess.Popen(["%s/bin/srvctl" % self.gi_home,
-                                'config', 'database', '-v'],
-                                stdout=subprocess.PIPE)
-        dbs_info = proc.stdout.read()
-        dbs = dbs_info.splitlines()
+        dbs = self.get_info('root', "%s/bin/srvctl config "
+                            "database -v" % self.gi_home)
         for db in dbs:
             (db, home, version) = db.split('\t')
             self.databases[db] = home
@@ -78,11 +85,8 @@ class Inventory:
             user = self.homes[name]['user']
             os.environ["ORACLE_HOME"] = home
 
-            proc = subprocess.Popen(['su', user, '-c',
-                                    "%s/OPatch/opatch lspatches" % home],
-                                    stdout=subprocess.PIPE)
-            patch_info = proc.stdout.read()
-            patches = patch_info.splitlines()
+            patches = self.get_info(user,
+                                       "%s/OPatch/opatch lspatches" % home)
 
             print(home)
             self.homes[name]['patches'] = {}
@@ -95,8 +99,29 @@ class Inventory:
                     else:
                         print("\t%s" % id)
 
+    def instances(self):
+        for name in self.databases:
+            home = self.databases[name]
+            for n in self.homes:
+                if self.homes[n]['loc'] == home:
+                    user = self.homes[n]['user']
+
+            os.environ["ORACLE_HOME"] = home
+            instances = self.get_info(user, "%s/bin/srvctl "
+                                      "status database -d %s" % (home, name))
+#            self.databases[name]['instance'] = {}
+            # Instance db1 is running on node n3
+            re_db_status = re.compile(r'^Instance ([^\W]+)'
+                                      ' is running on node (.*)$')
+            print(instances)
+            for i in instances:
+                match = re_db_status.match(i)
+                print("%s %s" % (match.group(1), match.group(2)))
+
+
 i = Inventory()
 
 i.inventory()
 i.dbs()
 i.patches()
+i.instances()
